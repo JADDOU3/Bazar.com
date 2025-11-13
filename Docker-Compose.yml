@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  catalog-server:
+    build:
+      context: ./catalog-server
+    container_name: catalog_server
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./catalog-server/catalog.csv:/usr/src/app/catalog.csv
+    networks:
+      - bazar_network
+    environment:
+      - NODE_ENV=production
+
+  order-server:
+    build:
+      context: ./order-server
+    container_name: order_server
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./order-server/catalog.csv:/usr/src/app/catalog.csv
+      - ./order-server/orders.csv:/usr/src/app/orders.csv
+    networks:
+      - bazar_network
+    environment:
+      - NODE_ENV=production
+      - CATALOG_SERVER=http://catalog-server:3001
+    depends_on:
+      - catalog-server
+
+  front-end:
+    build:
+      context: ./front-end
+    container_name: frontend_server
+    ports:
+      - "3000:3000"
+    networks:
+      - bazar_network
+    environment:
+      - NODE_ENV=production
+      - CATALOG_SERVER=http://catalog-server:3001
+      - ORDER_SERVER=http://order-server:3002
+    depends_on:
+      - catalog-server
+      - order-server
+
+networks:
+  bazar_network:
+    driver: bridge
