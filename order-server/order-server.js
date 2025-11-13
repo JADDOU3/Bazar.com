@@ -1,100 +1,111 @@
 const express = require('express');
-const fs = require('fs');
-const csv = require('csv-parser');
+const axios = require('axios');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-
 const app = express();
 const PORT = 3002;
-
-let catalog = [];
-
-fs.createReadStream('./proj.csv')
-    .pipe(csv())
-    .on('data', (data) => {
-        data.id = parseInt(data.id);
-        data.price = parseFloat(data.price);
-        data.stock = parseInt(data.stock);
-        catalog.push(data);
-    })
-    .on('end', () => {
-        console.log('CSV file successfully processed');
-    });
+const CATALOG_SERVER = process.env.CATALOG_SERVER || 'http://localhost:3001';
 
 app.use(express.json());
 
 function logOrder(order) {
     const csvWriter = createCsvWriter({
-        path: 'C:\\Users\\fadih\\dosProject_Part1\\orders.csv',
+        path: './orders.csv',
         header: [
-            { id: 'order_id', title: 'order_id' },
-            { id: 'item_id', title: 'item_id' },
+            { id: 'id', title: 'id' },
             { id: 'title', title: 'title' },
-            { id: 'quantity', title: 'quantity' }
+            { id: 'topic', title: 'topic' },
+            { id: 'quantity', title: 'quantity' },
+            { id: 'price', title: 'price' }
         ],
         append: true
     });
     return csvWriter.writeRecords([order]);
 }
 
- app.post('/purchase/:item_number', (req, res) => {
+app.post('/purchase/:item_number', async (req, res) => {
     const itemNumber = parseInt(req.params.item_number);
-    const { title, quantity } = req.body;
+    console.log(`[ORDER] Purchase request for item ${itemNumber}`);
 
-    const book = catalog.find(book => book.id === itemNumber);
+    try {
+        const infoResponse = await axios.get(`${CATALOG_SERVER}/info/${itemNumber}`);
 
-    if (book) {
-        if (book.stock >= quantity) {
-            book.stock -= quantity;
-
-            const order = {
-                order_id: Date.now().toString(),
-                item_id: book.id,
-                title: book.title,
-                quantity: quantity
-            };
-
-            logOrder(order)
-                .then(() => {
-                    console.log(`Order logged successfully: ${quantity} copies of "${book.title}"`);
-
-                    const csvWriter = createCsvWriter({
-                        path: '../proj.csv',
-                        header: [
-                            { id: 'id', title: 'id' },
-                            { id: 'title', title: 'title' },
-                            { id: 'author', title: 'author' },
-                            { id: 'topic', title: 'topic' },
-                            { id: 'price', title: 'price' },
-                            { id: 'stock', title: 'stock' }
-                        ]
-                    });
-
-                    csvWriter.writeRecords(catalog)
-                        .then(() => {
-                            console.log('CSV file updated successfully');
-                            res.json({ message: `Purchase successful: ${quantity} copies of "${book.title}"`, book });
-                        })
-                        .catch((error) => {
-                            console.error('Error updating CSV file:', error);
-                            res.status(500).send('Error updating CSV file');
-                        });
-                })
-                .catch((error) => {
-                    console.error('Error logging order:', error);
-                    res.status(500).send('Error logging order');
-                });
-        } else {
-            console.log('Not enough stock available');
-            res.status(400).send('Not enough stock available');
+        if (!infoResponse.data) {
+            console.log(`[ORDER] Item ${itemNumber} not found`);
+            return res.status(404).json({ error: 'Item not found' });
         }
-    } else {
-        console.log('Book not found');
-        res.status(404).send('Book not found');
+
+        const itemInfo = infoResponse.data;
+
+        if (itemInfo.quantity <= 0) {
+            console.log(`[ORDER] Item ${itemNumber} is out of stock`);
+            return res.status(400).json({ error: 'Out of stock' });
+        }
+
+        const decrementResponse = await axios.post(`${CATALOG_SERVER}/decrement/${itemNumber}`);
+
+        if (decrementResponse.status !== 200) {
+            const errorMsg = (decrementResponse.data && decrementResponse.data.error) || 'Failed to update stock';
+            console.log(`[ORDER] Failed to decrement stock: ${errorMsg}`);
+            return res.status(400).json({ error: errorMsg });
+        }
+
+        const order = {
+            id: itemNumber,
+            title: itemInfo.title,
+            topic: itemInfo.topic,
+            quantity: itemInfo.quantity,
+            price: itemInfo.price
+        };
+
+        await logOrder(order);
+
+        const result = {
+            item_id: itemNumber,
+            title: itemInfo.title,
+            price: itemInfo.price,
+            message: 'Purchase successful'
+        };
+
+        console.log(`[ORDER] Purchase completed: bought book "${itemInfo.title}"`);
+        res.json(result);
+
+    } catch (error) {
+        if (error.response) {
+            console.log(`[ORDER] Error from catalog service: ${error.response.status}`);
+            return res.status(error.response.status).json({
+                error: (error.response.data && error.response.data.error) || 'Catalog service error'
+            });
+        } else if (error.code === 'ECONNREFUSED') {
+            console.log('[ORDER] Error: Cannot connect to catalog server');
+            return res.status(503).json({ error: 'Catalog service unavailable' });
+        } else {
+            console.error('[ORDER] Error processing purchase:', error.message);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
     }
-}); 
+});
 
+app.get('/orders', (req, res) => {
+    const fs = require('fs');
+    const csv = require('csv-parser');
+    const orders = [];
 
+    fs.createReadStream('./orders.csv')
+        .pipe(csv())
+        .on('data', (data) => {
+            orders.push(data);
+        })
+        .on('end', () => {
+            console.log(`[ORDER] Retrieved ${orders.length} orders`);
+            res.json(orders);
+        })
+        .on('error', (error) => {
+            console.error('[ORDER] Error reading orders:', error);
+            res.status(500).json({ error: 'Error reading orders' });
+        });
+});
 
 app.listen(PORT, () => {
-    console.log(`Order service running on port ${PORT}`);
+    console.log(`[ORDER] Order service running on port ${PORT}`);
+    console.log(`[ORDER] Configured to connect to catalog at ${CATALOG_SERVER}`);
 });
