@@ -4,8 +4,21 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const app = express();
 const PORT = 3002;
 const CATALOG_SERVER = process.env.CATALOG_SERVER || 'http://localhost:3001';
+const REPLICA_SERVER = process.env.REPLICA_SERVER || null;
 
 app.use(express.json());
+
+// Sync order with replica
+async function syncOrderWithReplica(order) {
+    if (!REPLICA_SERVER) return;
+    
+    try {
+        await axios.post(`${REPLICA_SERVER}/sync-order`, { order });
+        console.log(`[ORDER] Synced order to replica for item ${order.id}`);
+    } catch (error) {
+        console.error(`[ORDER] Failed to sync with replica: ${error.message}`);
+    }
+}
 
 function logOrder(order) {
     const csvWriter = createCsvWriter({
@@ -41,7 +54,7 @@ app.post('/purchase/:item_number', async (req, res) => {
             return res.status(400).json({ error: 'Out of stock' });
         }
 
-        const decrementResponse = await axios.post(`${CATALOG_SERVER}/decrement/${itemNumber}`);
+        const decrementResponse = await axios.put(`${CATALOG_SERVER}/decrement/${itemNumber}`);
 
         if (decrementResponse.status !== 200) {
             const errorMsg = (decrementResponse.data && decrementResponse.data.error) || 'Failed to update stock';
@@ -58,6 +71,9 @@ app.post('/purchase/:item_number', async (req, res) => {
         };
 
         await logOrder(order);
+        
+        // Sync with replica
+        await syncOrderWithReplica(order);
 
         const result = {
             item_id: itemNumber,
@@ -103,6 +119,25 @@ app.get('/orders', (req, res) => {
             console.error('[ORDER] Error reading orders:', error);
             res.status(500).json({ error: 'Error reading orders' });
         });
+});
+
+app.get('/status', (req, res) => {
+    res.json({ status: 'ok' });
+});
+
+// Sync endpoint for replica (receives order from primary)
+app.post('/sync-order', async (req, res) => {
+    const { order } = req.body;
+    
+    console.log(`[ORDER] Received sync order for item ${order.id}`);
+    
+    try {
+        await logOrder(order);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[ORDER] Error syncing order:', error);
+        res.status(500).json({ error: 'Error syncing order' });
+    }
 });
 
 app.listen(PORT, () => {

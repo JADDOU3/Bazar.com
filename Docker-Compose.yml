@@ -13,6 +13,23 @@ services:
       - bazar_network
     environment:
       - NODE_ENV=production
+      - REPLICA_SERVER=http://catalog-server-replica:3001
+      - FRONTEND_SERVER=http://front-end:3000
+
+  catalog-server-replica:
+    build:
+      context: ./catalog-server
+    container_name: catalog_server_replica
+    ports:
+      - "3003:3001"
+    volumes:
+      - ./catalog-server/catalog.csv:/usr/src/app/catalog.csv
+    networks:
+      - bazar_network
+    environment:
+      - NODE_ENV=production
+      - REPLICA_SERVER=http://catalog-server:3001
+      - FRONTEND_SERVER=http://front-end:3000
 
   order-server:
     build:
@@ -21,13 +38,30 @@ services:
     ports:
       - "3002:3002"
     volumes:
-      - ./order-server/catalog.csv:/usr/src/app/catalog.csv
       - ./order-server/orders.csv:/usr/src/app/orders.csv
     networks:
       - bazar_network
     environment:
       - NODE_ENV=production
       - CATALOG_SERVER=http://catalog-server:3001
+      - REPLICA_SERVER=http://order-server-replica:3002
+    depends_on:
+      - catalog-server
+
+  order-server-replica:
+    build:
+      context: ./order-server
+    container_name: order_server_replica
+    ports:
+      - "3004:3002"
+    volumes:
+      - ./order-server/orders.csv:/usr/src/app/orders.csv
+    networks:
+      - bazar_network
+    environment:
+      - NODE_ENV=production
+      - CATALOG_SERVER=http://catalog-server:3001
+      - REPLICA_SERVER=http://order-server:3002
     depends_on:
       - catalog-server
 
@@ -41,11 +75,15 @@ services:
       - bazar_network
     environment:
       - NODE_ENV=production
-      - CATALOG_SERVER=http://catalog-server:3001
-      - ORDER_SERVER=http://order-server:3002
+      - CATALOG_SERVER_1=http://catalog-server:3001
+      - CATALOG_SERVER_2=http://catalog-server-replica:3001
+      - ORDER_SERVER_1=http://order-server:3002
+      - ORDER_SERVER_2=http://order-server-replica:3002
     depends_on:
       - catalog-server
+      - catalog-server-replica
       - order-server
+      - order-server-replica
 
 networks:
   bazar_network:
