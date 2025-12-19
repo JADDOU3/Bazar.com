@@ -69,10 +69,10 @@ app.get('/search/:topic', async (req, res) => {
     }
     
     try {
-        const response = await tryRequestWithFallback(catalogServers, {
-            method: 'GET',
-            url: `/search/${topic}`
-        });
+        const selectedServer = getNextCatalogServer();
+        console.log(`[FRONTEND] Using catalog server: ${selectedServer}`);
+        
+        const response = await axios.get(`${selectedServer}/search/${topic}`);
         
         // Store in cache
         cache.set(cacheKey, {
@@ -104,10 +104,10 @@ app.get('/info/:item_number', async (req, res) => {
     }
     
     try {
-        const response = await tryRequestWithFallback(catalogServers, {
-            method: 'GET',
-            url: `/info/${itemNumber}`
-        });
+        const selectedServer = getNextCatalogServer();
+        console.log(`[FRONTEND] Using catalog server: ${selectedServer}`);
+        
+        const response = await axios.get(`${selectedServer}/info/${itemNumber}`);
         
         // Store in cache
         cache.set(cacheKey, {
@@ -130,10 +130,10 @@ app.post('/purchase/:item_number', async (req, res) => {
     console.log(`[FRONTEND] Purchase request for item: ${itemNumber}`);
     
     try {
-        const response = await tryRequestWithFallback(orderServers, {
-            method: 'POST',
-            url: `/purchase/${itemNumber}`
-        });
+        const selectedServer = getNextOrderServer();
+        console.log(`[FRONTEND] Using order server: ${selectedServer}`);
+        
+        const response = await axios.post(`${selectedServer}/purchase/${itemNumber}`);
         
         res.json(response.data);
     } catch (error) {
@@ -153,6 +153,39 @@ app.post('/invalidate/:item_number', (req, res) => {
     console.log(`[FRONTEND] Cache invalidated for item: ${itemNumber}`);
     
     res.json({ success: true });
+});
+
+// Test endpoints for verification
+app.get('/cache/stats', (req, res) => {
+    const cacheEntries = [];
+    cache.forEach((value, key) => {
+        const age = Date.now() - value.timestamp;
+        const valid = age < CACHE_TTL;
+        cacheEntries.push({
+            key,
+            age_ms: age,
+            valid,
+            expires_in_ms: valid ? CACHE_TTL - age : 0
+        });
+    });
+    
+    res.json({
+        cache_ttl_ms: CACHE_TTL,
+        total_entries: cache.size,
+        entries: cacheEntries
+    });
+});
+
+app.get('/loadbalancer/stats', (req, res) => {
+    res.json({
+        catalog_servers: catalogServers,
+        order_servers: orderServers,
+        current_catalog_index: catalogIndex,
+        current_order_index: orderIndex,
+        next_catalog_server: catalogServers[catalogIndex],
+        next_order_server: orderServers[orderIndex],
+        algorithm: 'round-robin'
+    });
 });
 
 app.listen(PORT, () => {
